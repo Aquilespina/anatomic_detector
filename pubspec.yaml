@@ -1,24 +1,23 @@
-name: anatomic_detector
-description: "App para detección de puntos anatómicos"
-
-publish_to: 'none'
-
-version: 1.0.0+1
+name: escoliosis_detector
+description: "Detección local de escoliosis con IA"
 
 environment:
-  sdk: '>=2.18.0 <4.0.0'
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
-  google_mlkit_pose_detection: ^0.14.0
   image_picker: ^1.0.4
-  camera: ^0.10.5
+  image: ^4.0.17
+  # Forzando la versión compatible con Dart 3
+  tflite_flutter: ^0.12.1
+  path_provider: ^2.1.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/models/ # Carpeta de los modelos

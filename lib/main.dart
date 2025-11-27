@@ -1,7 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+import 'package:image/image.dart' as img;
+
+// Importar los servicios de IA REALES
+import 'services/pose_detector.dart';
+import 'services/feature_calculator.dart';
+import 'services/classifier.dart';
 
 void main() {
   runApp(const MyApp());
@@ -13,9 +18,10 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Detector Anatómico',
+      title: 'Anatomic AI: Detector Postural',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
+        primarySwatch: Colors.deepPurple,
+        useMaterial3: true,
       ),
       home: const HomeScreen(),
       debugShowCheckedModeBanner: false,
@@ -31,101 +37,112 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  File? _image;
-  String _result = 'Toma una foto para analizar';
+  File? _imageFile;
+  String _statusMessage = 'Selecciona una imagen para analizar tu postura.';
   bool _isAnalyzing = false;
 
-  final ImagePicker _picker = ImagePicker();
+  final PoseDetector _poseDetector = PoseDetector();
+  final PostureClassifier _classifier = PostureClassifier();
 
-  Future<void> _pickImageFromCamera() async {
+  ClassificationResult? _classificationResult;
+  List<PoseLandmark> _detectedLandmarks = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _poseDetector.initialize();
+    _classifier.initialize();
+  }
+
+  @override
+  void dispose() {
+    _poseDetector.dispose();
+    _classifier.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickImage(ImageSource source) async {
+    final picker = ImagePicker();
     try {
-      final XFile? pickedFile = await _picker.pickImage(
-        source: ImageSource.camera,
+      final pickedFile = await picker.pickImage(
+        source: source,
         maxWidth: 1024,
-        maxHeight: 1024,
-        imageQuality: 80,
       );
 
       if (pickedFile != null) {
         setState(() {
-          _image = File(pickedFile.path);
-          _result = 'Analizando imagen...';
+          _imageFile = File(pickedFile.path);
+          _statusMessage = 'Analizando imagen...';
           _isAnalyzing = true;
+          _classificationResult = null;
+          _detectedLandmarks = [];
         });
-        await _analyzeImage(_image!);
+        await _analyzeImage(_imageFile!);
       }
     } catch (e) {
-      _showError('Error al tomar foto: $e');
+      _showError('Error al obtener la imagen: $e');
     }
   }
 
-  Future<void> _pickImageFromGallery() async {
-    try {
-      final XFile? pickedFile = await _picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1024,
-        maxHeight: 1024,
-        imageQuality: 80,
-      );
+  Future<void> _analyzeImage(File imageFile) async {
+    print("--- INICIANDO ANÁLISIS CON MODELO ESPECIALISTA v3 ---");
 
-      if (pickedFile != null) {
+    try {
+      final imageBytes = await imageFile.readAsBytes();
+      final img.Image? image = img.decodeImage(imageBytes);
+
+      if (image == null) {
+        _showError('No se pudo decodificar la imagen.');
+        return;
+      }
+
+      final landmarks = await _poseDetector.detectPose(image);
+
+      // --- FILTRO INTELIGENTE Y FLEXIBLE ---
+      // Solo exigimos los 4 puntos más críticos para el diagnóstico de espalda.
+      final requiredLandmarkIds = {5, 6, 11, 12}; // Hombros y Caderas
+      final detectedIds = landmarks.map((landmark) => landmark.id).toSet();
+
+      if (!detectedIds.containsAll(requiredLandmarkIds)) {
         setState(() {
-          _image = File(pickedFile.path);
-          _result = 'Analizando imagen...';
-          _isAnalyzing = true;
+          _statusMessage =
+              'Análisis fallido: No se pudieron detectar los puntos clave de la espalda (hombros y caderas). Asegúrate de que la espalda esté completamente visible.';
+          _isAnalyzing = false;
         });
-        await _analyzeImage(_image!);
+        return;
       }
-    } catch (e) {
-      _showError('Error al seleccionar imagen: $e');
-    }
-  }
 
-  Future<void> _analyzeImage(File image) async {
-    try {
-      final inputImage = InputImage.fromFile(image);
-
-      // Configuración del detector de poses
-      final options = PoseDetectorOptions();
-      final poseDetector = PoseDetector(options: options);
-
-      final List<Pose> poses = await poseDetector.processImage(inputImage);
+      final features = FeatureCalculator.calculatePostureFeatures(landmarks);
+      final result = await _classifier.classifyPosture(features);
 
       setState(() {
+        _statusMessage = 'Análisis completado.';
+        _classificationResult = result;
+        _detectedLandmarks = landmarks;
         _isAnalyzing = false;
-
-        if (poses.isNotEmpty) {
-          final pose = poses.first;
-          _result = '✅ Puntos detectados: ${pose.landmarks.length}\n'
-              'Pose detectada correctamente';
-        } else {
-          _result = '❌ No se detectaron puntos anatómicos\n'
-              'Intenta con otra imagen';
-        }
       });
-
     } catch (e) {
-      setState(() {
-        _isAnalyzing = false;
-        _result = '❌ Error en el análisis: $e';
-      });
+      _showError('Ocurrió un error durante el análisis: $e');
     }
   }
 
   void _showError(String message) {
+    setState(() {
+      _statusMessage = message;
+      _isAnalyzing = false;
+    });
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
     );
   }
 
-  void _resetApp() {
+  void _reset() {
     setState(() {
-      _image = null;
-      _result = 'Toma una foto para analizar';
+      _imageFile = null;
+      _statusMessage = 'Selecciona una imagen para analizar tu postura.';
       _isAnalyzing = false;
+      _classificationResult = null;
+      _detectedLandmarks = [];
     });
   }
 
@@ -133,82 +150,118 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Detector Anatómico'),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
+        // --- TÍTULO CORREGIDO ---
+        title: const Text('Anatomic AI: Detector Postural'),
         actions: [
-          if (_image != null)
+          if (_imageFile != null && !_isAnalyzing)
             IconButton(
-              onPressed: _resetApp,
               icon: const Icon(Icons.refresh),
+              onPressed: _reset,
+              tooltip: 'Reiniciar',
             ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20.0),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Área de la imagen
             Container(
               height: 300,
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: _image != null
-                  ? Image.file(_image!, fit: BoxFit.cover)
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(12),
+                  color: Colors.grey.shade50),
+              child: _imageFile != null
+                  ? Image.file(_imageFile!, fit: BoxFit.contain)
                   : const Center(
-                child: Icon(Icons.photo_camera, size: 50),
-              ),
+                      child: Icon(Icons.image, size: 50, color: Colors.grey)),
             ),
-
             const SizedBox(height: 20),
-
-            // Resultado
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: _isAnalyzing ? Colors.blue[100] :
-                _result.contains('✅') ? Colors.green[100] :
-                _result.contains('❌') ? Colors.red[100] : Colors.grey[100],
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  if (_isAnalyzing)
-                    const CircularProgressIndicator()
-                  else if (_result.contains('✅'))
-                    const Icon(Icons.check, color: Colors.green)
-                  else if (_result.contains('❌'))
-                      const Icon(Icons.error, color: Colors.red)
-                    else
-                      const Icon(Icons.info, color: Colors.blue),
-
-                  const SizedBox(width: 12),
-                  Expanded(child: Text(_result)),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 20),
-
-            // Botones
             Row(
               children: [
                 Expanded(
-                  child: ElevatedButton(
-                    onPressed: _isAnalyzing ? null : _pickImageFromCamera,
-                    child: const Text('Cámara'),
+                  child: ElevatedButton.icon(
+                    onPressed: _isAnalyzing
+                        ? null
+                        : () => _pickImage(ImageSource.camera),
+                    icon: const Icon(Icons.camera_alt),
+                    label: const Text('Cámara'),
+                    style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12)),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: ElevatedButton(
-                    onPressed: _isAnalyzing ? null : _pickImageFromGallery,
-                    child: const Text('Galería'),
+                  child: ElevatedButton.icon(
+                    onPressed: _isAnalyzing
+                        ? null
+                        : () => _pickImage(ImageSource.gallery),
+                    icon: const Icon(Icons.photo_library),
+                    label: const Text('Galería'),
+                    style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12)),
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 20),
+            if (_isAnalyzing)
+              const Center(
+                  child: Padding(
+                padding: EdgeInsets.all(8.0),
+                child: CircularProgressIndicator(),
+              )),
+            Text(
+              _statusMessage,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            if (_classificationResult != null)
+              _buildResultCard(_classificationResult!),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildResultCard(ClassificationResult result) {
+    Color cardColor = Colors.grey;
+    if (result.label == 'Saludable') cardColor = Colors.green;
+    if (result.label == 'Posible escoliosis') cardColor = Colors.orange;
+    if (result.label == 'Indeterminado') cardColor = Colors.red;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 20.0),
+      elevation: 4,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              result.label.toUpperCase(),
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    color: cardColor,
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Confianza: ${(result.confidence * 100).toStringAsFixed(1)}%',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const Divider(height: 24),
+            Text(
+              result.description,
+              style: Theme.of(context).textTheme.bodyLarge,
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 16.0),
+              child: Text(
+                'Puntos anatómicos detectados: ${_detectedLandmarks.length}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ),
           ],
         ),
