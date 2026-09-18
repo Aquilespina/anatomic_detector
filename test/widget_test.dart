@@ -1,30 +1,35 @@
-// This is a basic Flutter widget test.
+// Smoke test del dashboard.
 //
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// No se prueba DoctorSelectionScreen aquí: su initState consulta SQLite
+// (workspaces) y ese plugin no está mockeado en un test de widgets puro,
+// lo que tira `Bad state: databaseFactory not initialized`. DashboardScreen
+// no toca la base de datos en su build, así que sirve como smoke test real
+// sin necesitar un fake de sqflite.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 
-import 'package:anatomic_detector/main.dart';
+import 'package:escoliosis_detector/providers/tenant_provider.dart';
+import 'package:escoliosis_detector/screens/dashboard_screen.dart';
+import 'package:escoliosis_detector/theme/app_theme.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('El dashboard muestra el espacio activo y las acciones principales',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      ChangeNotifierProvider(
+        create: (_) => TenantProvider()..setTenant(1, name: 'Espacio 1'),
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: const DashboardScreen(),
+        ),
+      ),
+    );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('Espacio 1'), findsOneWidget);
+    expect(find.text('Nuevo análisis'), findsOneWidget);
+    expect(find.text('Personas'), findsOneWidget);
+    expect(find.text('Historial'), findsOneWidget);
   });
 }
